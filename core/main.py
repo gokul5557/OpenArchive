@@ -199,18 +199,12 @@ async def sync_messages(payload: SyncBatch, x_api_key: str = Header(None), x_org
                 recipient_domains = set()
                 sender_domain = None
                 
-                # Helper to extract domain from email
+                # Robust domain extraction
                 def extract_domain(email_str):
                     if email_str and '@' in email_str:
-                        # Split by @, take last part, strip whitespace, lower, and remove trailing >
-                        # Example: "Name <foo@bar.com>" -> "bar.com" (after stripping >)
-                        return email_val.split('@')[-1].strip().lower().rstrip('>') if 'email_val' not in locals() else email_str.split('@')[-1].strip().lower().rstrip('>')
-                    return None
-                    
-                # Improved version correctly referencing argument
-                def extract_domain(email_str):
-                    if email_str and '@' in email_str:
-                        return email_str.split('@')[-1].strip().lower().rstrip('>')
+                        # Handle "Name <email@domain.com>"
+                        addr = email_str.split('@')[-1].strip().lower().rstrip('>')
+                        return addr
                     return None
 
                 # Check headers
@@ -241,8 +235,21 @@ async def sync_messages(payload: SyncBatch, x_api_key: str = Header(None), x_org
                 doc['domains'] = list(filter(None, domains))
                 doc['sender_domain'] = sender_domain
                 doc['recipient_domains'] = list(filter(None, recipient_domains))
+
+                # SORTING: Add date_timestamp for Meilisearch sorting
+                import email.utils
+                date_str = doc.get('date')
+                if date_str:
+                    try:
+                        dt = email.utils.parsedate_to_datetime(date_str)
+                        doc['date_timestamp'] = int(dt.timestamp())
+                    except Exception as e:
+                        print(f"Warning: Failed to parse date '{date_str}': {e}")
+                        doc['date_timestamp'] = 0
+                else:
+                    doc['date_timestamp'] = 0
                 
-                # print(f"DEBUG: Extracted domains for {item.id}: Sender={doc['sender_domain']}, Recips={doc['recipient_domains']}")
+                # print(f"DEBUG: Ingesting {item.id} | Timestamp: {doc['date_timestamp']} | Domains: {doc['domains']}")
                 
                 documents_to_index.append(doc)
             else:
