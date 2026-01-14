@@ -22,3 +22,6 @@ __pycache__/
 .coverage
 htmlcov/*.img
 *.img
+
+# Local data (MiniO/Local CAS)
+data/
