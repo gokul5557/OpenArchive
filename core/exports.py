@@ -26,10 +26,10 @@ def generate_eml(metadata, decrypted_body):
     re-hydrating any CAS-stripped attachments.
     """
     import email
-    from email import policy
+    from email import encoders
     
-    # Parse the stripped EML (which is the actual source stored in DB)
-    msg = email.message_from_string(decrypted_body, policy=policy.default)
+    # Parse as legacy Message (more reliable for surgical re-hydration)
+    msg = email.message_from_string(decrypted_body)
     
     # Iterate and re-hydrate
     for part in msg.walk():
@@ -49,20 +49,31 @@ def generate_eml(metadata, decrypted_body):
             
             if blob_data:
                 # Re-attach content
-                # For EmailMessage from policy.default, we should use set_content
-                # But since we are modifying an existing part, we might need to manually set payload
-                
-                ctype = part.get_content_type()
-                maintype, subtype = ctype.split('/', 1) if '/' in ctype else ('application', 'octet-stream')
-                
-                # Use set_payload and update headers
                 part.set_payload(blob_data)
                 
-                # If it's not text, we usually need base64
-                if maintype != 'text':
-                     from email import encoders
-                     encoders.encode_base64(part)
+                # Encode as base64 and wrap lines correctly
+                encoders.encode_base64(part)
                 
+                # Force visibility by setting name and filename
+                filename = part.get_filename() or part.get_param("name", header="Content-Type")
+                if not filename:
+                    # Fallback filename
+                    filename = f"attachment_{cas_hash[:8]}"
+                    
+                # Set name in Content-Type (important for many viewers)
+                part.set_param("name", filename, header="Content-Type")
+                
+                # Set/Update Content-Disposition to attachment to force visibility
+                if "Content-Disposition" in part:
+                    part.set_param("filename", filename, header="Content-Disposition")
+                    # If it was inline, many viewers hide it from attachment list. 
+                    # For forensic export, we often want it visible.
+                    cd = part.get("Content-Disposition", "")
+                    if "inline" in cd.lower():
+                        part.replace_header("Content-Disposition", f'attachment; filename="{filename}"')
+                else:
+                    part.add_header("Content-Disposition", "attachment", filename=filename)
+
                 # Remove the CAS ref header to make it look "original"
                 if "X-OpenArchive-CAS-Ref" in part:
                     del part["X-OpenArchive-CAS-Ref"]
@@ -181,7 +192,12 @@ async def create_export_job(export_id: str, items: list, format: str = "native",
                         
                         if format == 'native':
                             eml = generate_eml(meta, decrypted_body)
-                            zf.writestr(f"{mid}.eml", eml.as_bytes())
+                            # Ensure proper CRLF and MIME formatting for standard viewers
+                            from email.generator import BytesGenerator
+                            fp = io.BytesIO()
+                            gen = BytesGenerator(fp, mangle_from_=False, maxheaderlen=78)
+                            gen.flatten(eml)
+                            zf.writestr(f"{mid}.eml", fp.getvalue())
                             
                         elif format == 'pdf':
                             pdf_bytes = generate_pdf(meta, decrypted_body, mid)
