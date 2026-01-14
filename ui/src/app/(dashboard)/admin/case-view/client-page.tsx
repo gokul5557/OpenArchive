@@ -167,7 +167,14 @@ export default function CaseDetailPage() {
             if (res.ok) {
                 const data = await res.json();
                 setExportModalOpen(false);
-                window.location.href = data.download_url;
+
+                // Robust download method using hidden anchor
+                const link = document.createElement('a');
+                link.href = data.download_url;
+                link.setAttribute('download', ''); // Optional: browse might use the name from content-disposition
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
             }
         } catch (err) {
             console.error(err);

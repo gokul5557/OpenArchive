@@ -21,7 +21,7 @@ export MINIO_ROOT_USER="admin"
 export MINIO_ROOT_PASSWORD="password"
 export MEILI_HTTP_ADDR="http://127.0.0.1:7700"
 export MEILI_MASTER_KEY="masterKey"
-export CORE_API_KEY="secret_shared_key"
+export CORE_API_KEY="secret"
 export OPENARCHIVE_MASTER_KEY="local-dev-key"
 export CORE_API_URL="http://127.0.0.1:8000/api/v1/sync"
 export PYTHONHTTPSVERIFY=0
@@ -43,6 +43,7 @@ cd sidecar
 nohup ../.venv/bin/python agent.py > agent_service.log 2>&1 &
 echo "SMTP Agent running in background (pid $!). Logs: sidecar/agent_service.log"
 # Start Sync Worker
+pkill -f sync.py || true
 nohup ../.venv/bin/python sync.py > sync_service.log 2>&1 &
 echo "Sync Worker running in background (pid $!). Logs: sidecar/sync_service.log"
 cd ..
