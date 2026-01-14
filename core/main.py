@@ -194,18 +194,57 @@ async def sync_messages(payload: SyncBatch, x_api_key: str = Header(None), x_org
                 doc['sha256'] = integrity.calculate_hash(blob_data)
                 doc['signature'] = integrity.sign_data(blob_data)
                 
+                # Robust email address extraction
+                def extract_email(email_str):
+                    if not email_str: return None
+                    import re
+                    # Handle "Name <email@domain.com>"
+                    match = re.search(r'<(.+?)>', email_str)
+                    if match: return match.group(1).lower().strip()
+                    # Handle "email@domain.com"
+                    if '@' in email_str: return email_str.strip().lower()
+                    return None
+
+                # Robust domain extraction
+                def extract_domain(email_str):
+                    email = extract_email(email_str)
+                    if email:
+                        return email.split('@')[-1]
+                    return None
+
+                # Indexing clean emails for Legal Holds
+                recipient_emails = set()
+                
+                # Header From
+                doc['sender_email'] = extract_email(doc.get('from'))
+                # Header To
+                to_val = doc.get('to')
+                if to_val:
+                    if isinstance(to_val, list):
+                        for t in to_val:
+                            e = extract_email(t)
+                            if e: recipient_emails.add(e)
+                    else:
+                        e = extract_email(to_val)
+                        if e: recipient_emails.add(e)
+                
+                # Envelope Overwrites/Additions
+                env_from = extract_email(doc.get('envelope_from'))
+                if env_from:
+                    doc['sender_email'] = env_from
+                
+                env_rcpts = doc.get('envelope_rcpt')
+                if env_rcpts:
+                    for r in env_rcpts:
+                        e = extract_email(r)
+                        if e: recipient_emails.add(e)
+                
+                doc['recipient_emails'] = list(recipient_emails)
+
                 # EXTRACT DOMAINS for Multi-Tenancy Filtering
                 domains = set()
                 recipient_domains = set()
                 sender_domain = None
-                
-                # Robust domain extraction
-                def extract_domain(email_str):
-                    if email_str and '@' in email_str:
-                        # Handle "Name <email@domain.com>"
-                        addr = email_str.split('@')[-1].strip().lower().rstrip('>')
-                        return addr
-                    return None
 
                 # Check headers
                 s_dom = extract_domain(doc.get('from'))
@@ -410,17 +449,24 @@ async def search_messages(
             
             # 2. Get all held "Accounts" (criteria-based) for this org
             active_holds = await conn.fetch("SELECT filter_criteria FROM legal_holds WHERE active = TRUE AND org_id = $1", org_id)
-            held_emails = set()
+            held_from = set()
+            held_to = set()
             for h in active_holds:
                 crit = json.loads(h['filter_criteria'])
-                if crit.get('from'): held_emails.add(crit['from'])
-                if crit.get('to'): held_emails.add(crit['to'])
+                if crit.get('from'): held_from.add(crit['from'])
+                if crit.get('to'): held_to.add(crit['to'])
 
             for hit in results['hits']:
+                # Clean email checks are most reliable
+                s_email = hit.get('sender_email')
+                r_emails = hit.get('recipient_emails', [])
+                
                 hit['is_on_hold'] = (
                     hit['id'] in held_set or 
-                    hit.get('from') in held_emails or 
-                    hit.get('to') in held_emails
+                    s_email in held_from or 
+                    any(r in held_to for r in r_emails) or
+                    hit.get('from') in held_from or 
+                    hit.get('to') in held_to
                 )
     finally:
         await conn.close()

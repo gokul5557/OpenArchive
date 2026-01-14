@@ -344,11 +344,14 @@ async def create_hold(hold: LegalHoldCreate, org_id: int):
             # For complex queries, we might need a translator.
             # Using search.search_documents with filters.
             
-            filter_parts = []
+            filter_parts = [f'org_id = {org_id}']
             for k, v in hold.filter_criteria.items():
-                # Handling basic equality for now. 
-                # e.g. "from": "john@gmail.com" -> "from = 'john@gmail.com'"
-                filter_parts.append(f'{k} = "{v}"')
+                if k == 'from':
+                    filter_parts.append(f'sender_email = "{v}"')
+                elif k == 'to':
+                    filter_parts.append(f'recipient_emails = "{v}"')
+                else:
+                    filter_parts.append(f'{k} = "{v}"')
             
             filter_query = " AND ".join(filter_parts)
             

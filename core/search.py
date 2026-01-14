@@ -14,7 +14,7 @@ def ensure_index():
         client.create_index('emails', {'primaryKey': 'id'})
     
     # Always update settings to ensure they are current
-    index.update_filterable_attributes(['id', 'to', 'from', 'date', 'date_timestamp', 'org_id', 'tenant_id', 'domains', 'has_attachments', 'is_spam', 'sender_domain', 'recipient_domains', 'message_id', 'in_reply_to', 'references', 'attachment_content', 'sha256', 'signature'])
+    index.update_filterable_attributes(['id', 'to', 'from', 'date', 'date_timestamp', 'org_id', 'tenant_id', 'domains', 'has_attachments', 'is_spam', 'sender_domain', 'recipient_domains', 'message_id', 'in_reply_to', 'references', 'attachment_content', 'sha256', 'signature', 'envelope_from', 'envelope_rcpt', 'sender_email', 'recipient_emails'])
     index.update_searchable_attributes(['subject', 'from', 'to', 'attachment_content', 'id', 'sha256'])
     index.update_sortable_attributes(['date', 'date_timestamp'])
     index.update_pagination_settings({'maxTotalHits': 1000000})
