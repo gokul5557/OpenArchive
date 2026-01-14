@@ -17,29 +17,46 @@ import redaction
 EXPORT_DIR = "/tmp/exports"
 os.makedirs(EXPORT_DIR, exist_ok=True)
 
+import re
+import base64
+
 def generate_eml(metadata, decrypted_body):
-    """Reconstructs an EML object from metadata and body."""
-    msg = EmailMessage()
-    msg['Subject'] = metadata.get('subject', 'No Subject')
-    msg['From'] = metadata.get('from', 'Unknown')
-    msg['To'] = metadata.get('to', 'Unknown')
+    """
+    Reconstructs the original EML object from the stripped source (decrypted_body),
+    re-hydrating any CAS-stripped attachments.
+    """
+    import email
+    from email import policy
     
-    # Handle Date - Convert simplified or timestamp to RFC2822?
-    # Metadata date is ISO string or int timestamp? Ingest script sent timestamp (int).
-    # Meili might store whatever we sent. Ingest used int timestamp.
-    # EmailMessage expects a string or None? It handles string mostly.
+    # Parse the stripped EML (which is the actual source stored in DB)
+    msg = email.message_from_string(decrypted_body, policy=policy.default)
     
-    date_val = metadata.get('date')
-    if date_val:
-        try:
-            # If timestamp
-            dt = datetime.fromtimestamp(float(date_val))
-            msg['Date'] = dt.strftime('%a, %d %b %Y %H:%M:%S %z')
-        except:
-            msg['Date'] = str(date_val)
+    # Iterate and re-hydrate
+    for part in msg.walk():
+        # Check for CAS Header
+        cas_ref = part.get("X-OpenArchive-CAS-Ref")
+        if cas_ref:
+            cas_hash = cas_ref.strip()
+            blob_data = storage.get_blob(f"cas_{cas_hash}.enc")
             
-    # Set Body
-    msg.set_content(decrypted_body)
+            if blob_data:
+                # Re-attach content
+                # We assume the blob_data is the raw bytes of the attachment
+                # The Content-Transfer-Encoding header should still be present in the part from the original EML?
+                # Agent strips payload but usually keeps headers.
+                # If Agent set payload to None, we set it back.
+                
+                # Check current encoding
+                cte = part.get("Content-Transfer-Encoding", "").lower()
+                
+                # If we have raw bytes, we should probably set payload as bytes
+                part.set_payload(blob_data)
+                
+                # Remove the CAS ref header to make it look "original"
+                del part["X-OpenArchive-CAS-Ref"]
+            else:
+                print(f"Export Warning: Missing CAS blob {cas_hash}")
+                
     return msg
 
 def clean_text(text):
