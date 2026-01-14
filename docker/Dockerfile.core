@@ -1,0 +1,41 @@
+# Stage 1: UI Build
+FROM node:20-alpine AS ui-builder
+WORKDIR /app/ui
+COPY ui/package*.json ./
+RUN npm ci
+COPY ui/ .
+# Force static export
+RUN sed -i "s/const nextConfig: NextConfig = {/const nextConfig: NextConfig = { output: 'export',/" next.config.ts
+RUN npm run build
+
+# Stage 2: Core + Nginx
+FROM python:3.11-slim
+
+# Install Nginx & Supervisor
+RUN apt-get update && apt-get install -y \
+    nginx \
+    supervisor \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app/core
+
+# Python Deps
+COPY core/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy Core Code
+COPY core/ .
+
+# Copy UI Artifacts
+COPY --from=ui-builder /app/ui/out /var/www/html
+
+# Nginx Config
+COPY docker/nginx.conf /etc/nginx/sites-available/default
+
+# Supervisor Config
+COPY docker/supervisord_core.conf /etc/supervisor/conf.d/supervisord.conf
+
+# Ensure certs directory
+RUN mkdir -p /etc/ssl/openarchive
+
+CMD ["/usr/bin/supervisord"]

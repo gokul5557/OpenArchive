@@ -1,0 +1,24 @@
+FROM python:3.11-slim
+
+# Install system deps (Tesseract for OCR)
+RUN apt-get update && apt-get install -y \
+    tesseract-ocr \
+    supervisor \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Install Python deps
+COPY sidecar/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy Code
+COPY sidecar/ .
+
+# Ensure certs directory exists (if mounted)
+RUN mkdir -p /etc/ssl/openarchive
+
+# Supervisor Config
+COPY docker/supervisord_agent.conf /etc/supervisor/conf.d/supervisord.conf
+
+CMD ["/usr/bin/supervisord"]

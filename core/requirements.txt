@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+pydantic
+boto3
+meilisearch
+asyncpg
+python-multipart
+# For decoding fernet if we decide to do server-side decrypt eventually, though agent does encrypt.
+cryptography
+passlib[bcrypt]
+python-jose[cryptography]
+fpdf2

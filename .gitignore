@@ -1,0 +1,24 @@
+# Data Directories (Docker Volumes)
+secure_data/
+minio_data/
+meili_data/
+
+# Local DBs
+sidecar/buffer.db
+sidecar/buffer.db-journal
+sidecar/data/
+
+# Logs
+*.log
+logs/
+
+# Env & Config
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/*.img
+*.img

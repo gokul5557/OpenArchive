@@ -1,0 +1,16 @@
+secure_data/
+data/
+node_modules/
+.next/
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.env
+.git/
+postgres_data/
+minio_data/
+meili_data/
+coverage/
+openarchive_data.img
+certs/

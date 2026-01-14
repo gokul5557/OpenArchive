@@ -1,0 +1,8 @@
+aiosmtpd
+requests
+cryptography
+aiosqlite
+aiohttp
+pdfplumber
+pytesseract
+Pillow

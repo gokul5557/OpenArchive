@@ -1,0 +1,83 @@
+version: '3.8'
+
+services:
+  core:
+    image: openarchive/core:latest
+    # build:
+    #   context: .
+    #   dockerfile: docker/Dockerfile.core
+    ports:
+      - "8443:443" # Core UI + API (HTTPS) - Changed to 8443
+      - "2525:2525" # Central SMTP Ingestion
+    volumes:
+      - ./certs:/etc/ssl/openarchive:ro # Mount Certificates
+    environment:
+      - DATABASE_URL=postgresql://user:password@postgres:5432/archive
+      - MINIO_ENDPOINT=http://minio:9000
+      - MINIO_ROOT_USER=admin
+      - MINIO_ROOT_PASSWORD=password
+      - MEILI_HTTP_ADDR=http://meilisearch:7700
+      - MEILI_MASTER_KEY=masterKey
+      - CORE_API_KEY=secret_shared_key
+      - OPENARCHIVE_MASTER_KEY=change-this-to-a-secure-random-string
+      - ALLOWED_SMTP_IPS=127.0.0.1,172.16.0.0/12,192.168.0.0/16 # Whitelist
+    depends_on:
+      - postgres
+      - minio
+      - meilisearch
+
+  agent:
+    image: openarchive/agent:latest
+    # build:
+    #   context: .
+    #   dockerfile: docker/Dockerfile.agent
+    ports:
+      - "2526:2525" # Agent Listen Port
+    environment:
+      - CORE_API_URL=https://core/api/v1/sync # Connects via Internal Docker Network (Https/443 default port on core container)
+      # Wait, core container listens on 443.
+      # Service name `core` resolves to internal IP.
+      # Request `https://core/api...` will hit port 443. OK.
+      - CORE_API_KEY=secret_shared_key
+      - PYTHONHTTPSVERIFY=0
+    depends_on:
+      - core
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: archive
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5435:5432"
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: password
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9005:9000"
+      - "9006:9001"
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.3
+    ports:
+      - "7705:7700"
+    environment:
+      MEILI_MASTER_KEY: masterKey
+    volumes:
+      # Mount the encrypted loopback volume here for security
+      # Ensure you ran scripts/setup_encrypted_volume.sh first!
+      - ./secure_data/meili_data:/meili_data
+
+volumes:
+  postgres_data:
+  minio_data:
+  meili_data:
