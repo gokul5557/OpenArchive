@@ -23,6 +23,7 @@ def get_master_key():
     return kdf.derive(MASTER_SECRET.encode())
 
 KEY = get_master_key()
+print(f"🔒 Encryption Module Loaded. Key Prefix: {KEY.hex()[:8]}")
 aesgcm = AESGCM(KEY)
 
 def encrypt_data(data: bytes) -> bytes:

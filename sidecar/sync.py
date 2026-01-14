@@ -3,7 +3,10 @@ import aiohttp
 import logging
 import json
 import base64
+import base64
 import os
+# from dotenv import load_dotenv
+# load_dotenv()
 from buffer import get_pending_messages, mark_synced, get_pending_cas, mark_cas_synced
 
 # Configure Logging
@@ -11,7 +14,7 @@ logger = logging.getLogger("OpenArchiveSync")
 
 import ssl
 
-CORE_API_URL = os.getenv("CORE_API_URL", "https://localhost:8000/api/v1/sync")
+CORE_API_URL = os.getenv("CORE_API_URL", "http://localhost:8000/api/v1/sync")
 CORE_CAS_CHECK_URL = CORE_API_URL.replace("/sync", "/cas/check")
 CORE_CAS_UPLOAD_URL = CORE_API_URL.replace("/sync", "/cas/upload")
 API_KEY = os.getenv("CORE_API_KEY", "secret")

@@ -263,6 +263,7 @@ class CASCheckRequest(BaseModel):
 @app.post("/api/v1/cas/check")
 async def check_cas_availability(req: CASCheckRequest, x_api_key: str = Header(None)):
     if x_api_key != API_KEY:
+        print(f"AUTH FAIL: Received='{x_api_key}' Expected='{API_KEY}'")
         raise HTTPException(status_code=401, detail="Invalid API Key")
     
     result = {}
@@ -316,14 +317,34 @@ async def search_messages(
     filters = [f"org_id = {org_id}"] # Meilisearch automatically handles 'value IN array_field'
 
     
-    if user_domain:
-        # Core restriction: Document must involve ONE of the user's domains
-        # Support comma-separated list
-        u_domains = [d.strip() for d in user_domain.split(',') if d.strip()]
-        
-        if u_domains:
-            domain_filters = [f"domains = '{d}'" for d in u_domains]
-            filters.append(f"({' OR '.join(domain_filters)})")
+    
+    
+    # DB Connection for Org Domain Lookup & Legal Holds
+    conn = await database.get_db_connection()
+    try:
+        if user_domain:
+            # Core restriction: Document must involve ONE of the user's domains
+            # Support comma-separated list
+            raw_domains = [d.strip() for d in user_domain.split(',') if d.strip()]
+            
+            # EXPAND: If a domain belongs to the Org, allow access to ALL Org domains (Domain Aliasing)
+            try:
+                org_domains_raw = await conn.fetchval("SELECT domains FROM organizations WHERE id = $1", org_id)
+                org_domains = set(org_domains_raw) if org_domains_raw else set()
+                
+                expanded_domains = set(raw_domains)
+                if not org_domains.isdisjoint(expanded_domains):
+                     expanded_domains.update(org_domains)
+                
+                u_domains = list(expanded_domains)
+            except Exception as e:
+                print(f"Error expanding domains: {e}")
+                u_domains = raw_domains
+            
+            if u_domains:
+                domain_filters = [f"domains = '{d}'" for d in u_domains]
+                filters.append(f"({' OR '.join(domain_filters)})")
+
         
         # Directional logic relative to user_domain(s) - Complex for multiple
         # For now, if multiple domains, simplify direction logic or apply to all
@@ -344,38 +365,38 @@ async def search_messages(
                  rd_filters = [f"recipient_domains = '{d}'" for d in u_domains]
                  filters.append(f"({' OR '.join(sd_filters)}) AND ({' OR '.join(rd_filters)})")
     
-    if from_addr:
-        filters.append(f"from = '{from_addr}'")
-        
-    if to_addr:
-        filters.append(f"to = '{to_addr}'")
-
-    if has_attachments is not None:
-        filters.append(f"has_attachments = {str(has_attachments).lower()}")
-        
-    if is_spam is not None:
-        filters.append(f"is_spam = {str(is_spam).lower()}")
-
-    if date_start:
-         filters.append(f"date >= {date_start}")
-         
-    if date_end:
-         filters.append(f"date <= {date_end}")
-
-    if attachment_keyword:
-        if not q:
-            q = attachment_keyword
-        else:
-            q = f"{q} {attachment_keyword}"
-
-    filter_query = " AND ".join(filters) if filters else None
+        if from_addr:
+            if not q: q = from_addr
+            else: q = f"{q} {from_addr}"
+            
+        if to_addr:
+             if not q: q = to_addr
+             else: q = f"{q} {to_addr}"
     
-    results = search.search_documents(q, limit, filter_query, offset)
+        if has_attachments is not None:
+            filters.append(f"has_attachments = {str(has_attachments).lower()}")
+            
+        if is_spam is not None:
+            filters.append(f"is_spam = {str(is_spam).lower()}")
     
-    # Check for Legal Holds on results
-    if results and results.get('hits'):
-        conn = await database.get_db_connection()
-        try:
+        if date_start:
+             filters.append(f"date >= {date_start}")
+             
+        if date_end:
+             filters.append(f"date <= {date_end}")
+    
+        if attachment_keyword:
+            if not q:
+                q = attachment_keyword
+            else:
+                q = f"{q} {attachment_keyword}"
+    
+        filter_query = " AND ".join(filters) if filters else None
+        
+        results = search.search_documents(q, limit, filter_query, offset)
+        
+        # Check for Legal Holds on results
+        if results and results.get('hits'):
             # 1. Get all held message IDs for this org
             held_ids = await conn.fetch("SELECT message_id FROM legal_hold_items i JOIN legal_holds h ON i.hold_id = h.id WHERE h.org_id = $1", org_id)
             held_set = {r['message_id'] for r in held_ids}
@@ -394,8 +415,8 @@ async def search_messages(
                     hit.get('from') in held_emails or 
                     hit.get('to') in held_emails
                 )
-        finally:
-            await conn.close()
+    finally:
+        await conn.close()
             
     return results
 
@@ -488,27 +509,93 @@ async def get_message(id: str, org_id: int):
                 msg_obj = email.message_from_string(decoded_content, policy=email.policy.default)
                 body_text = ""
                 body_html = ""
-                
-                # Simple traversal
-                if msg_obj.is_multipart():
-                    for part in msg_obj.walk():
-                        ctype = part.get_content_type()
-                        cdispo = str(part.get("Content-Disposition"))
+                attachments = []
+                inline_images = {} # Map Content-ID -> Base64
+
+                for part in msg_obj.walk():
+                    ctype = part.get_content_type()
+                    cdispo = str(part.get("Content-Disposition", ""))
+                    cid = part.get("Content-ID", "").strip("<>")
+                    
+                    # Check for CAS Reference
+                    cas_ref = part.get("X-OpenArchive-CAS-Ref")
+                    payload = None
+                    
+                    if cas_ref:
+                        cas_hash = cas_ref.strip()
+                        blob_data = storage.get_blob(f"cas_{cas_hash}.enc")
+                        if blob_data:
+                            print(f"DEBUG: Re-hydrated CAS Attachment {cas_hash} ({len(blob_data)} bytes)")
+                            payload = blob_data
+                        else:
+                            print(f"Warning: CAS Attachment Blob {cas_hash} not found.")
+                            # Fallback if possible. Check if it is multipart before calling get_content
+                            if not part.is_multipart():
+                                payload = part.get_content()
+                    else:
+                        if not part.is_multipart():
+                            try:
+                                payload = part.get_content()
+                            except Exception as e:
+                                print(f"Warning: Failed to get content for part {ctype}: {e}")
+                                payload = part.get_payload(decode=True) # Fallback to raw payload
+
+                    is_attachment = "attachment" in cdispo or (cid and not ctype.startswith("text"))
+                    
+                    if is_attachment:
+                        b64_payload = None
                         
-                        if "attachment" in cdispo:
-                            continue
+                        if payload is None:
+                            continue # Skip if no payload found
+
+                        if isinstance(payload, bytes):
+                            b64_payload = base64.b64encode(payload).decode('utf-8')
+                        elif isinstance(payload, str):
+                             b64_payload = base64.b64encode(payload.encode('utf-8')).decode('utf-8')
+                        elif isinstance(payload, list) or hasattr(payload, 'as_bytes'):
+                            # Handle message/rfc822 or other objects
+                             try:
+                                 raw = payload.as_bytes()
+                                 b64_payload = base64.b64encode(raw).decode('utf-8')
+                             except:
+                                 # Fallback for complex objects
+                                 try:
+                                     raw = str(payload).encode('utf-8')
+                                     b64_payload = base64.b64encode(raw).decode('utf-8')
+                                 except: pass
+
+                        if b64_payload:
+                            # If it has a CID, store for substitution
+                            if cid:
+                                inline_images[cid] = f"data:{ctype};base64,{b64_payload}"
                             
-                        if ctype == "text/plain" and not body_text:
-                            body_text = part.get_content()
-                        elif ctype == "text/html" and not body_html:
-                            body_html = part.get_content()
-                else:
-                    ctype = msg_obj.get_content_type()
-                    if ctype == "text/plain":
-                        body_text = msg_obj.get_content()
-                    elif ctype == "text/html":
-                        body_html = msg_obj.get_content()
-                        
+                            # Also list as regular attachment if it has a filename or is an attachment
+                            filename = part.get_filename()
+                            if filename or "attachment" in cdispo:
+                                attachments.append({
+                                    "filename": filename or f"attachment_{len(attachments)+1}.{ctype.split('/')[-1]}",
+                                    "content_type": ctype,
+                                    "size": len(b64_payload), # Approx size
+                                    "content_b64": b64_payload
+                                })
+                    else:
+                        # Body Parts
+                        if ctype == "text/plain" and "attachment" not in cdispo:
+                            if payload and isinstance(payload, str):
+                                body_text += payload
+                            elif payload and isinstance(payload, bytes):
+                                body_text += payload.decode('utf-8', errors='replace')
+                        elif ctype == "text/html" and "attachment" not in cdispo:
+                             if payload and isinstance(payload, str):
+                                body_html += payload
+                             elif payload and isinstance(payload, bytes):
+                                body_html += payload.decode('utf-8', errors='replace')
+
+                # Fix Inline Images in HTML
+                if body_html and inline_images:
+                    for cid, data_uri in inline_images.items():
+                        body_html = body_html.replace(f"cid:{cid}", data_uri)
+
                 # Prioritize HTML for "content_html" and Text for "content" (fallback)
                 final_content = body_text or body_html or decoded_content
                 
@@ -516,13 +603,18 @@ async def get_message(id: str, org_id: int):
                     "id": id,
                     "content": final_content, # Legacy/Text
                     "content_html": body_html,
+                    "attachments": attachments,
                     "raw_eml": decoded_content # Full source
                 }
                 
             except Exception as parsing_error:
                 print(f"EML Parsing failed: {parsing_error}")
                 # Fallback to raw string
-                return {"id": id, "content": decoded_content}
+                return {
+                    "id": id, 
+                    "content": decoded_content,
+                    "raw_eml": decoded_content
+                }
 
         except Exception as e:
              # Fallback for binary/failed decode
@@ -534,6 +626,21 @@ async def get_message(id: str, org_id: int):
     except Exception as e:
         print(f"Decryption error: {e}")
         raise HTTPException(status_code=500, detail="Decryption failed")
+
+@app.get("/api/v1/messages/{id}/headers")
+async def get_message_headers_endpoint(id: str, org_id: int):
+    msg = await get_message_content(id, org_id)
+    raw_eml = msg.get("raw_eml", "")
+    if not raw_eml:
+        return []
+        
+    import email, email.policy
+    try:
+            # Parse just headers
+            msg_obj = email.message_from_string(raw_eml, policy=email.policy.default)
+            return [{"name": k, "value": str(v)} for k, v in msg_obj.items()]
+    except:
+            return []
 
 @app.get("/api/v1/messages/{id}/thread")
 async def get_message_thread(id: str, org_id: int):

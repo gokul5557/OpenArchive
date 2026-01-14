@@ -11,6 +11,12 @@ interface MessageContent {
     content_html?: string;
     content_b64?: string;
     raw_eml?: string;
+    attachments?: Array<{
+        filename: string;
+        content_type: string;
+        size: number;
+        content_b64?: string;
+    }>;
     error?: string;
 }
 
@@ -174,12 +180,42 @@ export default function MessageDetail() {
                                     {showRedacted ? '🔒 Redaction Active' : '🔓 Redaction Preview'}
                                 </button>
                             </div>
-                            <div className={`font-mono text-sm leading-relaxed whitespace-pre-wrap p-6 rounded-md border transition-all ${showRedacted
+                            <div className={`font-mono text-sm leading-relaxed whitespace-pre-wrap break-words break-all p-6 rounded-md border transition-all ${showRedacted
                                 ? 'bg-zinc-900 text-zinc-100 border-zinc-800'
                                 : 'bg-zinc-50 text-zinc-800 border-zinc-200'
-                                }`}>
-                                {showRedacted ? (redactedContent || "Processing...") : content}
+                                } overflow-x-auto`}>
+
+                                {showRedacted ? (
+                                    redactedContent || "Processing..."
+                                ) : (
+                                    data.content_html ? (
+                                        <div dangerouslySetInnerHTML={{ __html: data.content_html }} className="prose prose-sm max-w-none" />
+                                    ) : (
+                                        content
+                                    )
+                                )}
                             </div>
+
+                            {/* Attachments Section */}
+                            {data.attachments && data.attachments.length > 0 && (
+                                <div className="mt-6 p-4 border border-zinc-200 rounded-md bg-zinc-50">
+                                    <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-3">Attachments</h3>
+                                    <div className="flex flex-wrap gap-2">
+                                        {data.attachments.map((att, idx) => (
+                                            <a
+                                                key={idx}
+                                                href={`data:${att.content_type};base64,${att.content_b64}`}
+                                                download={att.filename}
+                                                className="flex items-center gap-2 px-3 py-2 bg-white border border-zinc-200 rounded text-sm text-zinc-700 hover:border-zinc-400 hover:text-zinc-900 transition-colors no-underline"
+                                            >
+                                                <svg className="w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg>
+                                                <span className="truncate max-w-[200px]">{att.filename}</span>
+                                                <span className="text-xs text-zinc-400">({Math.round(att.size / 1024)} KB)</span>
+                                            </a>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
                         </>
                     )}
 

@@ -26,11 +26,12 @@ def upload_blob(object_name, data):
     ensure_bucket()
     try:
         # Encrypt before upload
-        encrypted = encryption.encrypt_data(data)
+        # encrypted = encryption.encrypt_data(data)
+        # DISABLE SSE due to double-encryption issues
         s3_client.put_object(
             Bucket=BUCKET_NAME,
             Key=object_name,
-            Body=encrypted
+            Body=data
         )
         return True
     except Exception as e:
