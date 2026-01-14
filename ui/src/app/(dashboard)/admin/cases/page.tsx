@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useUser } from '@/components/UserContext';
 
 interface Case {
     id: number;
@@ -13,18 +14,22 @@ interface Case {
 }
 
 export default function CasesPage() {
+    const { orgId } = useUser();
     const [cases, setCases] = useState<Case[]>([]);
     const [loading, setLoading] = useState(true);
     const [newCase, setNewCase] = useState({ name: '', description: '' });
     const [showCreate, setShowCreate] = useState(false);
 
     useEffect(() => {
-        fetchCases();
-    }, []);
+        if (orgId) {
+            fetchCases();
+        }
+    }, [orgId]);
 
     const fetchCases = async () => {
+        if (!orgId) return;
         try {
-            const res = await fetch('/api/v1/cases');
+            const res = await fetch(`/api/v1/cases?org_id=${orgId}`);
             if (res.ok) {
                 const data = await res.json();
                 setCases(data);
@@ -38,8 +43,9 @@ export default function CasesPage() {
 
     const handleCreate = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (!orgId) return;
         try {
-            const res = await fetch('/api/v1/cases', {
+            const res = await fetch(`/api/v1/cases?org_id=${orgId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(newCase),

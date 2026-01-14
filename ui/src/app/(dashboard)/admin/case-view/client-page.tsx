@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { useUser } from '@/components/UserContext';
 
 interface CaseItem {
     id: number;
@@ -32,6 +33,7 @@ export default function CaseDetailPage() {
     const searchParams = useSearchParams();
     const id = searchParams.get('id');
     const router = useRouter();
+    const { orgId } = useUser();
 
     const [caseInfo, setCaseInfo] = useState<CaseData | null>(null);
     const [items, setItems] = useState<CaseItem[]>([]);
@@ -47,15 +49,16 @@ export default function CaseDetailPage() {
     const [exporting, setExporting] = useState(false);
 
     useEffect(() => {
-        if (id) {
+        if (id && orgId) {
             fetchCaseDetails();
             fetchUsers();
         }
-    }, [id]);
+    }, [id, orgId]);
 
     const fetchCaseDetails = async () => {
+        if (!orgId) return;
         try {
-            const res = await fetch(`/api/v1/cases/${id}`);
+            const res = await fetch(`/api/v1/cases/${id}?org_id=${orgId}`);
             if (res.ok) {
                 const data = await res.json();
                 setCaseInfo(data.case);
@@ -81,10 +84,10 @@ export default function CaseDetailPage() {
     };
 
     const handleBatchAssign = async () => {
-        if (!selectedAssignee || selectedItems.length === 0) return;
+        if (!selectedAssignee || selectedItems.length === 0 || !orgId) return;
 
         try {
-            const res = await fetch('/api/v1/cases/items/batch-assign', {
+            const res = await fetch(`/api/v1/cases/items/batch-assign?org_id=${orgId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -140,10 +143,10 @@ export default function CaseDetailPage() {
     };
 
     const handleDeleteCase = async () => {
-        if (!window.confirm("CRITICAL: Deleting this case will remove all evidence. Are you sure?")) return;
+        if (!window.confirm("CRITICAL: Deleting this case will remove all evidence. Are you sure?") || !orgId) return;
 
         try {
-            const res = await fetch(`/api/v1/cases/${id}`, { method: 'DELETE' });
+            const res = await fetch(`/api/v1/cases/${id}?org_id=${orgId}`, { method: 'DELETE' });
             if (res.ok) {
                 router.push("/admin/cases");
             }
@@ -153,9 +156,10 @@ export default function CaseDetailPage() {
     };
 
     const handleExport = async () => {
+        if (!orgId) return;
         setExporting(true);
         try {
-            const res = await fetch(`/api/v1/cases/${id}/export`, {
+            const res = await fetch(`/api/v1/cases/${id}/export?org_id=${orgId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ format: exportFormat, redact: redactPII })
