@@ -701,7 +701,7 @@ async def get_message(id: str, org_id: int):
 
 @app.get("/api/v1/messages/{id}/headers")
 async def get_message_headers_endpoint(id: str, org_id: int):
-    msg = await get_message_content(id, org_id)
+    msg = await get_message(id, org_id)
     raw_eml = msg.get("raw_eml", "")
     if not raw_eml:
         return []
