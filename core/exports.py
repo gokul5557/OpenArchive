@@ -35,25 +35,37 @@ def generate_eml(metadata, decrypted_body):
     for part in msg.walk():
         # Check for CAS Header
         cas_ref = part.get("X-OpenArchive-CAS-Ref")
+        if not cas_ref:
+            # Check for placeholder in payload if header missing
+            payload = part.get_payload()
+            if isinstance(payload, str) and "[CAS_REF:" in payload:
+                match = re.search(r"\[CAS_REF:(.*?)\]", payload)
+                if match:
+                    cas_ref = match.group(1)
+
         if cas_ref:
             cas_hash = cas_ref.strip()
             blob_data = storage.get_blob(f"cas_{cas_hash}.enc")
             
             if blob_data:
                 # Re-attach content
-                # We assume the blob_data is the raw bytes of the attachment
-                # The Content-Transfer-Encoding header should still be present in the part from the original EML?
-                # Agent strips payload but usually keeps headers.
-                # If Agent set payload to None, we set it back.
+                # For EmailMessage from policy.default, we should use set_content
+                # But since we are modifying an existing part, we might need to manually set payload
                 
-                # Check current encoding
-                cte = part.get("Content-Transfer-Encoding", "").lower()
+                ctype = part.get_content_type()
+                maintype, subtype = ctype.split('/', 1) if '/' in ctype else ('application', 'octet-stream')
                 
-                # If we have raw bytes, we should probably set payload as bytes
+                # Use set_payload and update headers
                 part.set_payload(blob_data)
                 
+                # If it's not text, we usually need base64
+                if maintype != 'text':
+                     from email import encoders
+                     encoders.encode_base64(part)
+                
                 # Remove the CAS ref header to make it look "original"
-                del part["X-OpenArchive-CAS-Ref"]
+                if "X-OpenArchive-CAS-Ref" in part:
+                    del part["X-OpenArchive-CAS-Ref"]
             else:
                 print(f"Export Warning: Missing CAS blob {cas_hash}")
                 
@@ -102,7 +114,7 @@ def generate_pdf(metadata, decrypted_body, bates_number):
     
     return pdf.output(dest='S')
     
-def create_export_job(export_id: str, items: list, format: str = "native", redact: bool = False):
+async def create_export_job(export_id: str, items: list, format: str = "native", redact: bool = False):
     """
     Background Task to process export.
     items: list of {message_id, tag?}

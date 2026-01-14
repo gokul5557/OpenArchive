@@ -229,7 +229,9 @@ async def export_case(case_id: int, org_id: int, background_tasks: BackgroundTas
             
         item_list = [{"message_id": i['message_id']} for i in items]
         job_id = str(uuid.uuid4())
-        background_tasks.add_task(exports.create_export_job, job_id, item_list, payload.format, payload.redact)
+        
+        # Run synchronously to ensure zip is ready before response returns (prevents 0-byte race condition)
+        await exports.create_export_job(job_id, item_list, payload.format, payload.redact)
         
         return {
             "status": "processing",
