@@ -23,9 +23,14 @@ import security
 import retention_worker
 import integrity_worker
 import smtp_server
+import analytics
 import asyncio
 
 app = FastAPI(title="OpenArchive Core API")
+
+@app.get("/api/v1/admin/analytics")
+async def get_admin_analytics(org_id: int):
+    return await analytics.get_org_analytics(org_id)
 
 # Configure Logging
 import logging
@@ -451,10 +456,12 @@ async def search_messages(
             active_holds = await conn.fetch("SELECT filter_criteria FROM legal_holds WHERE active = TRUE AND org_id = $1", org_id)
             held_from = set()
             held_to = set()
+            held_keywords = set()
             for h in active_holds:
                 crit = json.loads(h['filter_criteria'])
                 if crit.get('from'): held_from.add(crit['from'])
                 if crit.get('to'): held_to.add(crit['to'])
+                if crit.get('q'): held_keywords.add(crit['q'].lower())
 
             for hit in results['hits']:
                 # Clean email checks are most reliable
@@ -465,12 +472,20 @@ async def search_messages(
                 hit['sender_email_clean'] = s_email
                 hit['recipient_emails_clean'] = r_emails
                 
+                # Keyword match (heuristic for UI badge)
+                kw_match = False
+                if held_keywords:
+                    search_blob = f"{hit.get('subject','')} {hit.get('from','')} {hit.get('to','')}".lower()
+                    if any(kw in search_blob for kw in held_keywords):
+                        kw_match = True
+
                 hit['is_on_hold'] = (
                     hit['id'] in held_set or 
                     s_email in held_from or 
                     any(r in held_to for r in r_emails) or
                     hit.get('from') in held_from or 
-                    hit.get('to') in held_to
+                    hit.get('to') in held_to or
+                    kw_match
                 )
     finally:
         await conn.close()
@@ -709,10 +724,23 @@ async def get_message_thread(id: str, org_id: int):
 async def preview_redacted_message(id: str, org_id: int):
     msg = await get_message(id, org_id)
     content = msg.get("content") or (base64.b64decode(msg["content_b64"]).decode('utf-8') if msg.get("content_b64") else "")
+    entities = redaction.identify_pii(content)
     return {
         "id": id,
         "original": content,
-        "redacted": redaction.redact_text(content)
+        "redacted": redaction.redact_text(content),
+        "entities": entities
+    }
+
+@app.get("/api/v1/messages/{id}/pii-scan")
+async def scan_message_pii(id: str, org_id: int):
+    msg = await get_message(id, org_id)
+    content = msg.get("content") or (base64.b64decode(msg["content_b64"]).decode('utf-8') if msg.get("content_b64") else "")
+    entities = redaction.identify_pii(content)
+    return {
+        "id": id,
+        "pii_detected": len(entities) > 0,
+        "entities": entities
     }
 
 @app.get("/api/v1/messages/{id}/verify")

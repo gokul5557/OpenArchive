@@ -26,14 +26,17 @@ async def purge_expired_messages():
         held_rows = await conn.fetch("SELECT message_id FROM legal_hold_items")
         held_ids = {r['message_id'] for r in held_rows}
         
-        # 3. Get Account Holds (Domains/Emails)
+        # 3. Get Account & Keyword Holds
         account_holds = await conn.fetch("SELECT filter_criteria FROM legal_holds WHERE active = TRUE")
-        held_emails = set()
+        held_from = set()
+        held_to = set()
+        held_keywords = set()
         for h in account_holds:
             import json
             crit = json.loads(h['filter_criteria'])
-            if crit.get('from'): held_emails.add(crit['from'])
-            if crit.get('to'): held_emails.add(crit['to'])
+            if crit.get('from'): held_from.add(crit['from'].lower())
+            if crit.get('to'): held_to.add(crit['to'].lower())
+            if crit.get('q'): held_keywords.add(crit['q'].lower())
 
         for policy in policies:
             import json
@@ -59,9 +62,20 @@ async def purge_expired_messages():
                         logger.debug(f"Skipping {mid}: Explicitly Held.")
                         continue
                     
-                    if msg.get('from') in held_emails or msg.get('to') in held_emails:
+                    # Account Match
+                    s_email = msg.get('sender_email')
+                    r_emails = msg.get('recipient_emails', [])
+                    
+                    if s_email in held_from or any(r in held_to for r in r_emails):
                         logger.debug(f"Skipping {mid}: Associated with Held Account.")
                         continue
+                    
+                    # Keyword Match
+                    if held_keywords:
+                        search_blob = f"{msg.get('subject','')} {msg.get('from','')} {msg.get('to','')}".lower()
+                        if any(kw in search_blob for kw in held_keywords):
+                            logger.debug(f"Skipping {mid}: Matches Held Keywords.")
+                            continue
                     
                     # PERMANENT DELETE
                     try:

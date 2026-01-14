@@ -36,7 +36,10 @@ def search_documents(query: str, limit: int = 20, filter_query: str = None, offs
         search_params = {
             'limit': limit,
             'offset': offset,
-            'sort': ['date_timestamp:desc'] # Default sort by newest
+            'sort': ['date_timestamp:desc'], # Default sort by newest
+            'attributesToHighlight': ['subject', 'from', 'to', 'attachment_content'],
+            'highlightPreTag': '<mark>',
+            'highlightPostTag': '</mark>'
         }
         
         if filter_query:
