@@ -461,6 +461,10 @@ async def search_messages(
                 s_email = hit.get('sender_email')
                 r_emails = hit.get('recipient_emails', [])
                 
+                # Expose clean emails for UI
+                hit['sender_email_clean'] = s_email
+                hit['recipient_emails_clean'] = r_emails
+                
                 hit['is_on_hold'] = (
                     hit['id'] in held_set or 
                     s_email in held_from or 
