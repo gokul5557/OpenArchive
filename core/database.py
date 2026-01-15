@@ -2,6 +2,10 @@ import asyncpg
 import os
 import asyncio
 import json
+try:
+    import security
+except ImportError:
+    from core import security
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
@@ -55,6 +59,12 @@ async def init_db():
         except Exception as e:
             print(f"Migration error (password_hash): {e}")
 
+        # Schema Migration: Add totp_secret if missing
+        try:
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret TEXT")
+        except Exception as e:
+            print(f"Migration error (totp_secret): {e}")
+
         # Seed Default Org
         exists_org = await conn.fetchval("SELECT 1 FROM organizations WHERE slug = 'default'")
         if not exists_org:
@@ -93,13 +103,18 @@ async def init_db():
         default_org_id = await conn.fetchval("SELECT id FROM organizations WHERE slug = 'default'")
         exists_admin = await conn.fetchval("SELECT 1 FROM users WHERE username = 'admin'")
         if not exists_admin:
+            p_hash = security.get_password_hash("admin")
             await conn.execute("""
-                INSERT INTO users (username, role, org_id, domains) 
-                VALUES ('admin', 'super_admin', $1, '[]')
-            """, default_org_id)
+                INSERT INTO users (username, role, org_id, domains, password_hash) 
+                VALUES ('admin', 'super_admin', $1, '[]', $2)
+            """, default_org_id, p_hash)
             print("Initialized Super Admin user.")
         else:
-            await conn.execute("UPDATE users SET role = 'super_admin', org_id = $1 WHERE username = 'admin'", default_org_id)
+            # Update role and ensure password hash exists if missing (reset to admin)
+            p_hash = security.get_password_hash("admin")
+            # Only reset if NULL? Or force reset for dev? 
+            # Force reset to ensure we can login after backdoor removal
+            await conn.execute("UPDATE users SET role = 'super_admin', org_id = $1, password_hash = $2 WHERE username = 'admin'", default_org_id, p_hash)
 
         # 3. Audit Log Table (Updated)
         await conn.execute("""

@@ -93,12 +93,20 @@ export default function RetentionPage() {
                     <h1 className="text-2xl font-bold text-zinc-900 tracking-tight">
                         {user?.role === 'super_admin' ? 'Global Retention Rules' : 'Organization Retention Policies'}
                     </h1>
-                    <p className="text-zinc-500 text-sm">
-                        {user?.role === 'super_admin'
-                            ? 'Manage system-wide data retention and expiry.'
-                            : 'Manage data lifecycle for your domains.'}
-                    </p>
                 </div>
+                <button
+                    onClick={async () => {
+                        if (!confirm("Run retention enforcement now? This may delete expired data permanently.")) return;
+                        try {
+                            const res = await fetch('/api/v1/admin/retention/run', { method: 'POST' });
+                            if (res.ok) alert("Retention check started successfully.");
+                            else alert("Failed to start retention check.");
+                        } catch (e) { console.error(e); }
+                    }}
+                    className="bg-zinc-100 hover:bg-zinc-200 text-zinc-700 px-4 py-2 rounded text-sm font-medium border border-zinc-200 transition-colors shadow-sm"
+                >
+                    Run Policy Check Now
+                </button>
             </div>
 
             <div className="bg-white rounded-lg border border-zinc-200 shadow-sm p-6 mb-8">
@@ -193,6 +201,6 @@ export default function RetentionPage() {
                     </tbody>
                 </table>
             </div>
-        </div>
+        </div >
     );
 }

@@ -32,6 +32,7 @@ export default function MessageDetail() {
     const [redactedContent, setRedactedContent] = useState<string | null>(null);
     const [integrityStatus, setIntegrityStatus] = useState<'LOADING' | 'VALID' | 'TAMPERED' | 'UNAVAILABLE'>('LOADING');
     const [activeTab, setActiveTab] = useState<'message' | 'headers' | 'source'>('message');
+    const [piiEntities, setPiiEntities] = useState<any[]>([]);
 
     const logAudit = async (action: string, details: any) => {
         if (!orgId) return;
@@ -81,6 +82,16 @@ export default function MessageDetail() {
         fetch(`/api/v1/messages/${id}/preview-redacted?org_id=${orgId}`)
             .then(res => res.json())
             .then(data => setRedactedContent(data.redacted))
+            .catch(console.error);
+
+        // SCAN PII
+        fetch(`/api/v1/messages/${id}/pii-scan?org_id=${orgId}`)
+            .then(res => res.json())
+            .then(data => {
+                if (data.pii_detected) {
+                    setPiiEntities(data.entities || []);
+                }
+            })
             .catch(console.error);
 
         // Fetch Integrity Status
@@ -134,6 +145,11 @@ export default function MessageDetail() {
                                             WARNING: Tampering Detected
                                         </span>
                                     )}
+                                    {piiEntities.length > 0 && (
+                                        <span className="flex items-center gap-1 text-[10px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                                            ⚠️ PII Detected
+                                        </span>
+                                    )}
                                     {integrityStatus === 'LOADING' && (
                                         <span className="text-[10px] text-zinc-400">Verifying signature...</span>
                                     )}
@@ -169,6 +185,19 @@ export default function MessageDetail() {
                 <div className="min-h-[400px]">
                     {activeTab === 'message' && (
                         <>
+                            {piiEntities.length > 0 && !showRedacted && (
+                                <div className="mb-4 px-4 py-3 bg-amber-50 border border-amber-200 rounded text-amber-800 text-sm flex items-start gap-2">
+                                    <span className="mt-0.5">⚠️</span>
+                                    <div>
+                                        <p className="font-semibold">Sensitive Information Detected</p>
+                                        <p className="text-xs mt-1 opacity-90">
+                                            This message contains potential PII: <span className="font-mono font-medium">{[...new Set(piiEntities.map(e => e.label))].join(', ')}</span>.
+                                            You can view the redacted version using the toggle.
+                                        </p>
+                                    </div>
+                                </div>
+                            )}
+
                             <div className="flex justify-end mb-4">
                                 <button
                                     onClick={() => setShowRedacted(!showRedacted)}

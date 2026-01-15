@@ -3,12 +3,18 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 import os
 import base64
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.backends import default_backend
+try:
+    from config import settings
+except ImportError:
+    from core.config import settings
 
-# Master Key Management
+# Load Master Key Management
 # In production, this should come from a KMS (AWS KMS, dimaggio, Vault).
 # For now, we derive a key from an Env Secret + Salt.
 
-MASTER_SECRET = os.getenv("OPENARCHIVE_MASTER_KEY", "change-this-to-a-very-long-random-string-in-production")
+MASTER_SECRET = settings.OPENARCHIVE_MASTER_KEY
 SALT = b'openarchive_static_salt' # Should be random per file, but for simplicity/searchability in recovery, static.
 # Actually, AESGCM requires a unique Nonce, not unique Key.
 # We can use a static Master Key derived from Secret.

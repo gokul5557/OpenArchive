@@ -44,7 +44,7 @@ export default function Sidebar() {
             ...links,
             { href: '/admin', label: 'System Health & Orgs', icon: <Icons.Dashboard /> },
             { href: '/admin/users', label: 'Client Admins', icon: <Icons.Users /> },
-            { href: '/admin/system/agents', label: 'Sidecar Agents', icon: <Icons.System /> }, // Assuming agents are separate or part of dashboard, but user asked for "Agents" visibility.
+            { href: '/admin', label: 'Sidecar Agents', icon: <Icons.System /> },
             // "Agents" is currently displayed in AdminPage. Do we need a separate link? 
             // The dashboard /admin already shows agents. So maybe just keep Overview.
             // But let's be explicit if they want navigation.

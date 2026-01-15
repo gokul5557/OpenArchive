@@ -18,7 +18,7 @@ CORE_API_URL = os.getenv("CORE_API_URL", "http://localhost:8000/api/v1/sync")
 CORE_CAS_CHECK_URL = CORE_API_URL.replace("/sync", "/cas/check")
 CORE_CAS_UPLOAD_URL = CORE_API_URL.replace("/sync", "/cas/upload")
 API_KEY = os.getenv("CORE_API_KEY", "secret")
-ORG_ID = os.getenv("AGENT_ORG_ID", "1")
+API_KEY = os.getenv("CORE_API_KEY", "secret")
 
 async def sync_loop():
     logger.info(f"Starting Sync Loop... [Agent Org ID: {ORG_ID}]")
@@ -38,7 +38,9 @@ async def sync_loop():
                     
                     # 1. Check Existence
                     to_upload = []
-                    async with session.post(CORE_CAS_CHECK_URL, json={"hashes": hashes}, headers={"X-API-Key": API_KEY, "X-Org-ID": ORG_ID}) as resp:
+                    headers = {"X-API-Key": API_KEY}
+                    
+                    async with session.post(CORE_CAS_CHECK_URL, json={"hashes": hashes}, headers=headers) as resp:
                         if resp.status == 200:
                             existence_map = await resp.json()
                             to_upload = [h for h, exists in existence_map.items() if not exists]
@@ -60,7 +62,7 @@ async def sync_loop():
                                     })
                         
                         if cas_batch:
-                            async with session.post(CORE_CAS_UPLOAD_URL, json={"batch": cas_batch}, headers={"X-API-Key": API_KEY, "X-Org-ID": ORG_ID}) as resp:
+                            async with session.post(CORE_CAS_UPLOAD_URL, json={"batch": cas_batch}, headers=headers) as resp:
                                 if resp.status != 200:
                                     logger.error(f"CAS Upload Failed: {resp.status}")
                                     await asyncio.sleep(5)
@@ -99,7 +101,7 @@ async def sync_loop():
                 async with session.post(
                     CORE_API_URL, 
                     json={"batch": batch},
-                    headers={"X-API-Key": API_KEY, "X-Org-ID": ORG_ID}
+                    headers=headers
                 ) as resp:
                     if resp.status == 200:
                         logger.info(f"✅ BATCH SYNCED SUCCESSFULLY | Sent {len(batch)} messages.")

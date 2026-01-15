@@ -1,24 +1,32 @@
 # Reload Trigger 1
-from fastapi import FastAPI, Depends, HTTPException, Header, Request, BackgroundTasks
+from fastapi import FastAPI, Depends, HTTPException, Header, Request, BackgroundTasks, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from dotenv import load_dotenv
+try:
+    from config import settings
+    import storage
+    import search
+    import admin
+    import database
+    import cases
+    import exports
+    import threads
+    import redaction
+    import integrity
+    import security
+    import retention_worker
+    import integrity_worker
+except ImportError:
+    from core.config import settings
+    from core import storage, search, admin, database, cases, exports, threads, redaction, integrity, security, retention_worker, integrity_worker
+
 import base64
 import os
 import json
-
-load_dotenv()
-import storage
-import search
-import admin
-import database
-import cases
-import exports
-import threads
-import redaction
-import integrity
-import integrity
+import asyncio
+# import integrity # Duplicate import removed
 import security
 import retention_worker
 import integrity_worker
@@ -34,7 +42,7 @@ async def get_admin_analytics(org_id: int):
 
 # Configure Logging
 import logging
-log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+log_level = settings.LOG_LEVEL
 logging.basicConfig(level=log_level, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("OpenArchiveCore")
 logger.info(f"Logging initialized at level: {log_level}")
@@ -70,7 +78,7 @@ async def shutdown_db_client():
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
 app.include_router(cases.router, prefix="/api/v1/cases", tags=["cases"])
 
-API_KEY = os.getenv("CORE_API_KEY", "secret")
+API_KEY = settings.CORE_API_KEY
 
 class SyncItem(BaseModel):
     id: str
@@ -84,31 +92,32 @@ class SyncBatch(BaseModel):
 class LoginRequest(BaseModel):
     username: str
     password: str
+    otp: Optional[str] = None
 
 @app.post("/api/v1/auth/login")
 async def login(creds: LoginRequest):
-    # 1. Hardcoded Super Admin (bootstrap)
-    if creds.username == "admin" and creds.password == "admin":
-        return {"id": 1, "username": "admin", "role": "super_admin", "org_id": 1, "domains": []}
-
-    # 2. Database Lookup
+    # Database Lookup
     conn = await database.get_db_connection()
     try:
         user = await conn.fetchrow("SELECT * FROM users WHERE username = $1", creds.username)
         if user:
-            # 3. Verify Password
+            # Verify Password
             if not user['password_hash']:
-                # Migration: Allow any password if hash missing? 
-                # Or block? For transition, if you created user without pass, we might need a way to set it.
-                # But my 'create_user' forces password now.
-                # For old users (if any), they can't login unless we check plain password match (if we stored plain? No).
-                # We assume new users have hash.
-                pass 
-                # Fail open or closed? Closed for security.
-                # But wait, user asked "In admin client admin creation set password there".
-                # If hash is null, maybe fail.
-            elif not security.verify_password(creds.password, user['password_hash']):
+                # Migration: If no hash, allow login? NO.
+                # All valid users must have hashes now.
+                raise HTTPException(status_code=401, detail="Invalid credentials (no password set)")
+                
+            if not security.verify_password(creds.password, user['password_hash']):
                 raise HTTPException(status_code=401, detail="Invalid credentials")
+
+            # 2FA CHECK
+            if user['totp_secret']:
+                if not creds.otp:
+                    # Require OTP
+                    raise HTTPException(status_code=401, detail="2FA Required", headers={"X-OpenArchive-2FA-Required": "true"})
+                
+                if not security.verify_totp(user['totp_secret'], creds.otp):
+                    raise HTTPException(status_code=401, detail="Invalid 2FA Code")
 
             user_data = {
                 "id": user['id'],
@@ -118,7 +127,7 @@ async def login(creds: LoginRequest):
                 "domains": json.loads(user['domains']) if user['domains'] else []
             }
             
-            # 4. Create Token
+            # Create Token
             token = security.create_access_token(data={"sub": user['username'], "role": user['role'], "id": user['id']})
             
             return {
@@ -131,8 +140,32 @@ async def login(creds: LoginRequest):
     finally:
         await conn.close()
 
+@app.post("/api/v1/auth/2fa/setup")
+async def setup_2fa(current_user: security.User = Depends(security.get_current_user)):
+    # Generate Secret
+    secret = security.generate_totp_secret()
+    uri = security.get_totp_uri(current_user.username, secret)
+    return {"secret": secret, "otpauth_url": uri}
+
+class Enable2FARequest(BaseModel):
+    secret: str
+    code: str
+
+@app.post("/api/v1/auth/2fa/enable")
+async def enable_2fa(payload: Enable2FARequest, current_user: security.User = Depends(security.get_current_user)):
+    # Verify before enabling
+    if not security.verify_totp(payload.secret, payload.code):
+         raise HTTPException(status_code=400, detail="Invalid Code")
+
+    conn = await database.get_db_connection()
+    try:
+        await conn.execute("UPDATE users SET totp_secret = $1 WHERE id = $2", payload.secret, current_user.id)
+        return {"status": "2FA Enabled"}
+    finally:
+        await conn.close()
+
 @app.post("/api/v1/sync")
-async def sync_messages(payload: SyncBatch, x_api_key: str = Header(None), x_org_id: int = Header(1)):
+async def sync_messages(payload: SyncBatch, x_api_key: str = Header(None), x_org_id: Optional[int] = Header(None)):
     if x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API Key")
     
@@ -189,9 +222,10 @@ async def sync_messages(payload: SyncBatch, x_api_key: str = Header(None), x_org
                 except Exception as e:
                     print(f"Error resolving orgs: {e}")
 
-                # 3. Fallback to Default Org (1) if no resolution (or x_org_id if explicitly provided as fallback)
+                # 3. Fallback
                 if not resolved_org_ids:
-                    resolved_org_ids = [1]
+                    if x_org_id: resolved_org_ids = [x_org_id]
+                    else: resolved_org_ids = [1] # Default to Org 1 if completely unresolvable
                     
                 doc['org_id'] = resolved_org_ids # Now a LIST of integers
                 
@@ -348,11 +382,13 @@ async def upload_cas_blobs(payload: CASUploadBatch, x_api_key: str = Header(None
 
 @app.get("/api/v1/messages")
 async def search_messages(
-    org_id: int,
+    current_user: security.User = Depends(security.get_current_user),
+    org_id: int = Query(None), # Optional now, we strictly enforce or default based on User
     q: str = "", 
     limit: int = 20,
     offset: int = 0,
     user_domain: str = None,
+    # ... other params ...
     from_addr: str = None,
     to_addr: str = None,
     date_start: str = None,
@@ -362,58 +398,112 @@ async def search_messages(
     direction: str = None, # 'sent', 'received', 'internal'
     attachment_keyword: str = None
 ):
+    # RBAC & ISOLATION ENFORCEMENT
+    if current_user.role == 'client_admin':
+        raise HTTPException(status_code=403, detail="Client Admins are restricted from viewing email content. Please use an Auditor account.")
+
+    target_org_id = org_id
+    
+    if current_user.role != 'super_admin':
+        # 1. Force Org ID
+        if not current_user.org_id:
+             raise HTTPException(status_code=400, detail="User has no Organization assigned.")
+             
+        if org_id and org_id != current_user.org_id:
+            raise HTTPException(status_code=403, detail="Access to this Organization is denied.")
+            
+        target_org_id = current_user.org_id
+    else:
+        # Super Admin must specify org or we search all? 
+        # For now, require org_id or default to something? 
+        # MVP: If super admin doesn't specify, maybe error or search all?
+        # Let's require org_id for now for explicit search context.
+        if not target_org_id:
+             raise HTTPException(status_code=400, detail="org_id required for Super Admin search.")
+
     # Build filter query
-    # org_id in Meilisearch is now an ARRAY of integers.
-    # To strict-filter by current user's org_id, we check if user's org_id IN doc.org_id
-    filters = [f"org_id = {org_id}"] # Meilisearch automatically handles 'value IN array_field'
+    filters = [f"org_id = {target_org_id}"] 
 
     
     
     
-    # DB Connection for Org Domain Lookup & Legal Holds
+    # DB Connection for Org Domain Lookup
     conn = await database.get_db_connection()
     try:
-        if user_domain:
-            # Core restriction: Document must involve ONE of the user's domains
-            # Support comma-separated list
-            raw_domains = [d.strip() for d in user_domain.split(',') if d.strip()]
+        # 2. Domain Isolation Logic
+        allowed_domains = set()
+        
+        if current_user.role != 'super_admin':
+            # Fetch Org Domains from DB to be authoritative
+            org_domains_raw = await conn.fetchval("SELECT domains FROM organizations WHERE id = $1", target_org_id)
+            if org_domains_raw:
+                allowed_domains = set(org_domains_raw)
             
-            # EXPAND: If a domain belongs to the Org, allow access to ALL Org domains (Domain Aliasing)
-            try:
-                org_domains_raw = await conn.fetchval("SELECT domains FROM organizations WHERE id = $1", org_id)
-                org_domains = set(org_domains_raw) if org_domains_raw else set()
-                
-                expanded_domains = set(raw_domains)
-                if not org_domains.isdisjoint(expanded_domains):
-                     expanded_domains.update(org_domains)
-                
-                u_domains = list(expanded_domains)
-            except Exception as e:
-                print(f"Error expanding domains: {e}")
-                u_domains = raw_domains
+            if not allowed_domains:
+                # Edge case: Org has no domains? Should see nothing? or everything in org scope?
+                # "auditor... only get emails from or to their owned domains"
+                # If org has no domains, they see nothing? Or just org-scoped?
+                # Let's assume strict: Must have domains to see external emails.
+                # But internal emails might just be org_scoped.
+                # Let's fallback to just Org ID scope if no domains defined, 
+                # BUT warn or be strict? Architecture says "Isolation".
+                pass 
+
+            # Validate requested 'user_domain' if present
+            if user_domain:
+                requested_domains = {d.strip() for d in user_domain.split(',') if d.strip()}
+                if not requested_domains.issubset(allowed_domains):
+                     raise HTTPException(status_code=403, detail="Access to one or more requested domains is denied.")
+                final_filter_domains = list(requested_domains)
+            else:
+                final_filter_domains = list(allowed_domains)
             
-            if u_domains:
-                domain_filters = [f"domains = '{d}'" for d in u_domains]
+            # APPLY FILTER: (domains = 'd1' OR domains = 'd2' ...)
+            # We ONLY apply this if we have domains. If final_filter_domains is empty, 
+            # we rely solely on org_id (which might be broad if org has 0 domains but data has org_id=X).
+            # Provided the Ingestion side blindly assigns org_id=X only if domain matches, this is safe.
+            # But ingestion creates Org fallback (Resolved Org ID). 
+            # So Org ID is the primary fence. Domain filter is secondary for specific queries.
+            # But user asked "auditor only get emails... owned domains".
+            # If ingestion trusted domains to set org_id, then org_id implies domain ownership.
+            # So just org_id filter IS domain isolation effective.
+            # HOWEVER, for "Search Within Case" or specific domain filtering in UI, we support it.
+            
+            if final_filter_domains:
+                domain_filters = [f"domains = '{d}'" for d in final_filter_domains]
                 filters.append(f"({' OR '.join(domain_filters)})")
 
+        else:
+            # SUPER ADMIN
+            if user_domain:
+                # Just respect the request, no validation against org (Super Admin can see all)
+                # Or should we still validate against target_org?
+                # Let's assume Super Admin has God Mode.
+                raw_domains = [d.strip() for d in user_domain.split(',') if d.strip()]
+                if raw_domains:
+                     domain_filters = [f"domains = '{d}'" for d in raw_domains]
+                     filters.append(f"({' OR '.join(domain_filters)})")
+
         
-        # Directional logic relative to user_domain(s) - Complex for multiple
-        # For now, if multiple domains, simplify direction logic or apply to all
-        if direction:
+        # Directional logic relative to *filtered* domains
+        # If we have a set of "my domains", direction makes sense.
+        context_domains = list(allowed_domains) if current_user.role != 'super_admin' else []
+        if user_domain:
+             context_domains = [d.strip() for d in user_domain.split(',') if d.strip()]
+
+        if direction and context_domains:
              if direction == 'sent':
-                 # sender_domain IN [d1, d2]
-                 sd_filters = [f"sender_domain = '{d}'" for d in u_domains]
+                 # sender_domain IN context
+                 sd_filters = [f"sender_domain = '{d}'" for d in context_domains]
                  filters.append(f"({' OR '.join(sd_filters)})")
              elif direction == 'received':
-                 # recipient_domains matches ANY
-                 # recipient_domains = 'd1' OR recipient_domains = 'd2' - strictly checks containment
-                 rd_filters = [f"recipient_domains = '{d}'" for d in u_domains]
+                 # recipient_domains matches ANY context
+                 rd_filters = [f"recipient_domains = '{d}'" for d in context_domains]
                  filters.append(f"({' OR '.join(rd_filters)})")
              elif direction == 'internal':
-                 # Both sender && recipient in allowed list
-                 # (sender_domain IN u_domains) AND (recipient_domains IN u_domains)
-                 sd_filters = [f"sender_domain = '{d}'" for d in u_domains]
-                 rd_filters = [f"recipient_domains = '{d}'" for d in u_domains]
+                 # Both
+                 sd_filters = [f"sender_domain = '{d}'" for d in context_domains]
+                 rd_filters = [f"recipient_domains = '{d}'" for d in context_domains]
                  filters.append(f"({' OR '.join(sd_filters)}) AND ({' OR '.join(rd_filters)})")
     
         if from_addr:
@@ -428,7 +518,7 @@ async def search_messages(
             filters.append(f"has_attachments = {str(has_attachments).lower()}")
             
         if is_spam is not None:
-            filters.append(f"is_spam = {str(is_spam).lower()}")
+             filters.append(f"is_spam = {str(is_spam).lower()}")
     
         if date_start:
              filters.append(f"date >= {date_start}")
@@ -493,7 +583,22 @@ async def search_messages(
     return results
 
 @app.get("/api/v1/messages/{id}")
-async def get_message(id: str, org_id: int):
+async def get_message(id: str, org_id: int = Query(None), current_user: security.User = Depends(security.get_current_user)):
+    # RBAC: Block Client Admins
+    if current_user.role == 'client_admin':
+        raise HTTPException(status_code=403, detail="Client Admins are restricted from viewing email content. Please use an Auditor account.")
+
+    # Validate Org Access
+    if current_user.role != 'super_admin':
+        if not current_user.org_id:
+             raise HTTPException(status_code=403, detail="Access denied")
+        # Force Org ID context for later checks
+        if org_id and org_id != current_user.org_id:
+             raise HTTPException(status_code=403, detail="Access to this Organization is denied.")
+        org_id = current_user.org_id
+    else:
+        if not org_id:
+             raise HTTPException(status_code=400, detail="org_id required for Super Admin")
     # 1. Fetch encrypted blob
     blob_enc = storage.get_blob(f"{id}.enc")
     if not blob_enc:

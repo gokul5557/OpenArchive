@@ -19,14 +19,46 @@ export default function AdminPage() {
         }
     }, [user, orgId]);
 
-    const fetchAg = () => fetch('/api/v1/admin/system/agents').then(res => res.json()).then(setAgents).catch(console.error);
-    const fetchOrgs = () => fetch('/api/v1/admin/organizations').then(res => res.json()).then(setOrganizations).catch(console.error);
-    const fetchStats = (oid: number) => fetch(`/api/v1/admin/stats?org_id=${oid}`).then(res => res.json()).then(setStats).catch(console.error);
+    const getHeaders = () => {
+        const headers: Record<string, string> = {};
+        const token = localStorage.getItem('access_token');
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        return headers;
+    };
+
+    const fetchAg = () => fetch('/api/v1/admin/agents', { headers: getHeaders() })
+        .then(res => {
+            if (!res.ok) throw new Error("Failed");
+            return res.json();
+        })
+        .then(data => {
+            if (Array.isArray(data)) setAgents(data);
+        })
+        .catch(console.error);
+
+    const fetchOrgs = () => fetch('/api/v1/admin/organizations', { headers: getHeaders() })
+        .then(res => {
+            if (!res.ok) throw new Error("Failed");
+            return res.json();
+        })
+        .then(data => {
+            if (Array.isArray(data)) setOrganizations(data);
+        })
+        .catch(console.error);
+
+    const fetchStats = (oid: number) => fetch(`/api/v1/admin/analytics?org_id=${oid}`, { headers: getHeaders() }).then(res => res.json()).then(setStats).catch(console.error);
+
+    const formatBytes = (bytes: number) => {
+        if (!bytes) return '0 B';
+        const k = 1024;
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${['B', 'KB', 'MB', 'GB', 'TB'][i]}`;
+    };
 
     const handleDeleteOrg = async (id: number) => {
         if (!confirm('Are you sure? This deletes the Organization and all its users/data.')) return;
         try {
-            const res = await fetch(`/api/v1/admin/organizations/${id}`, { method: 'DELETE' });
+            const res = await fetch(`/api/v1/admin/organizations/${id}`, { method: 'DELETE', headers: getHeaders() });
             if (res.ok) fetchOrgs();
             else alert("Delete failed. (Ensure backend supports DELETE /organizations/{id})");
         } catch (e) { console.error(e); }
@@ -38,7 +70,7 @@ export default function AdminPage() {
         try {
             const res = await fetch('/api/v1/admin/organizations', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', ...getHeaders() },
                 body: JSON.stringify({
                     ...newOrg,
                     domains: newOrg.domains.split(',').map(d => d.trim()).filter(d => d)
@@ -62,55 +94,64 @@ export default function AdminPage() {
             <div className="max-w-6xl mx-auto space-y-8 animate-in fade-in duration-500">
                 <div className="flex justify-between items-center">
                     <div>
-                        <h1 className="text-2xl font-bold text-zinc-900 tracking-tight">Organization Overview</h1>
-                        <p className="text-zinc-500 text-sm">Manage your auditors and records.</p>
+                        <h1 className="text-2xl font-bold text-zinc-900 tracking-tight">Enterprise Dashboard</h1>
+                        <p className="text-zinc-500 text-sm">Real-time overview of your archive and legal holds.</p>
+                    </div>
+                    <div className="flex gap-2">
+                        <span className="px-3 py-1 bg-green-50 text-green-700 rounded-full text-xs font-semibold border border-green-200 flex items-center gap-2">
+                            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                            System Healthy
+                        </span>
                     </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                    <div className="bg-white rounded-lg border border-zinc-200 shadow-sm p-6 relative overflow-hidden group">
-                        <h3 className="font-semibold text-zinc-900 mb-2">Total Emails</h3>
+                    <div className="bg-white rounded-xl border border-zinc-200 shadow-sm p-6 relative overflow-hidden group">
+                        <h3 className="font-semibold text-zinc-900 mb-2">Total Messages</h3>
                         <p className="text-3xl font-bold text-indigo-600">
-                            {stats?.total_emails?.toLocaleString() || '0'}
+                            {stats?.total_messages?.toLocaleString() || '0'}
                         </p>
-                        <p className="text-xs text-zinc-500 mt-2">Indexed in your domains.</p>
-                        <a href="/audit" className="absolute inset-0"></a>
+                        <p className="text-xs text-zinc-500 mt-2">Indexed documents.</p>
                     </div>
-                    <div className="bg-white rounded-lg border border-zinc-200 shadow-sm p-6 relative overflow-hidden group">
+                    <div className="bg-white rounded-xl border border-zinc-200 shadow-sm p-6 relative overflow-hidden group">
                         <h3 className="font-semibold text-zinc-900 mb-2">My Auditors</h3>
                         <p className="text-3xl font-bold text-indigo-600">
-                            {stats?.active_auditors || '0'}
+                            --
                         </p>
                         <p className="text-xs text-zinc-500 mt-2">Active users.</p>
                         <a href="/admin/users" className="absolute inset-0"></a>
                     </div>
-                    <div className="bg-white rounded-lg border border-zinc-200 shadow-sm p-6 relative overflow-hidden group">
-                        <h3 className="font-semibold text-zinc-900 mb-2">Legal Holds</h3>
+                    <div className="bg-white rounded-xl border border-zinc-200 shadow-sm p-6 relative overflow-hidden group">
+                        <h3 className="font-semibold text-zinc-900 mb-2">Active Holds</h3>
                         <p className="text-3xl font-bold text-amber-600">
                             {stats?.active_holds || '0'}
                         </p>
-                        <p className="text-xs text-zinc-500 mt-2">Active preservation orders.</p>
+                        <p className="text-xs text-zinc-500 mt-2">
+                            {stats?.held_items?.toLocaleString() || '0'} items preserved.
+                        </p>
                         <a href="/admin/holds" className="absolute inset-0"></a>
                     </div>
-                    <div className="bg-white rounded-lg border border-zinc-200 shadow-sm p-6 relative overflow-hidden group">
-                        <h3 className="font-semibold text-zinc-900 mb-2">Open Cases</h3>
+                    <div className="bg-white rounded-xl border border-zinc-200 shadow-sm p-6 relative overflow-hidden group">
+                        <h3 className="font-semibold text-zinc-900 mb-2">Storage Volume</h3>
                         <p className="text-3xl font-bold text-blue-600">
-                            {stats?.open_cases || '0'}
+                            {formatBytes(stats?.storage_volume_bytes || 0)}
                         </p>
-                        <p className="text-xs text-zinc-500 mt-2">Ongoing investigations.</p>
-                        <a href="/admin/cases" className="absolute inset-0"></a>
+                        <p className="text-xs text-zinc-500 mt-2">Estimated consumption.</p>
                     </div>
                 </div>
 
-                {/* Added: Audit Log Links or Recent Activity could go here */}
-                {/* User asked for "Audit logs what auditors doing" -> Link to Logs or Widget */}
                 <div className="mt-8">
-                    <h3 className="text-lg font-semibold text-zinc-900 mb-4">Quick Links</h3>
+                    <h3 className="text-lg font-semibold text-zinc-900 mb-4">Enterprise Actions</h3>
                     <div className="flex gap-4">
-                        <a href="/admin/logs" className="text-sm text-indigo-600 hover:underline">View Audit Logs &rarr;</a>
+                        <a href="/admin/logs" className="px-4 py-3 bg-white border border-zinc-200 rounded-lg shadow-sm hover:border-indigo-300 hover:shadow-md transition-all text-sm font-medium text-zinc-700 flex items-center gap-2">
+                            Verify Audit Chain &rarr;
+                        </a>
+                        <a href="/admin/retention" className="px-4 py-3 bg-white border border-zinc-200 rounded-lg shadow-sm hover:border-indigo-300 hover:shadow-md transition-all text-sm font-medium text-zinc-700 flex items-center gap-2">
+                            Manage Retention &rarr;
+                        </a>
                     </div>
                 </div>
-            </div >
+            </div>
         );
     }
 

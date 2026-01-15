@@ -1,0 +1,114 @@
+version: '3.8'
+
+x-agent-defaults: &agent-defaults
+  build: ./sidecar
+  image: openarchive-agent:latest
+  network_mode: "host"
+  environment:
+    - CORE_URL=http://localhost:8000
+    - CORE_API_URL=http://localhost:8000/api/v1/sync
+    - CORE_API_KEY=test-api-key
+    - LOG_LEVEL=INFO
+  volumes:
+    - ./data_sim/{AGENT_NAME}:/app/data
+
+services:
+  agent-1:
+    <<: *agent-defaults
+    container_name: agent-1
+    environment:
+      - AGENT_NAME=Agent-1
+      - HOSTNAME=agent-1.sim
+      - SMTP_PORT=2601
+      - CORE_URL=http://localhost:8000
+      - CORE_API_URL=http://localhost:8000/api/v1/sync
+
+  agent-2:
+    <<: *agent-defaults
+    container_name: agent-2
+    environment:
+      - AGENT_NAME=Agent-2
+      - HOSTNAME=agent-2.sim
+      - SMTP_PORT=2602
+      - CORE_URL=http://localhost:8000
+      - CORE_API_URL=http://localhost:8000/api/v1/sync
+
+  agent-3:
+    <<: *agent-defaults
+    container_name: agent-3
+    environment:
+      - AGENT_NAME=Agent-3
+      - HOSTNAME=agent-3.sim
+      - SMTP_PORT=2603
+      - CORE_URL=http://localhost:8000
+      - CORE_API_URL=http://localhost:8000/api/v1/sync
+
+  agent-4:
+    <<: *agent-defaults
+    container_name: agent-4
+    environment:
+      - AGENT_NAME=Agent-4
+      - HOSTNAME=agent-4.sim
+      - SMTP_PORT=2604
+      - CORE_URL=http://localhost:8000
+      - CORE_API_URL=http://localhost:8000/api/v1/sync
+
+  agent-5:
+    <<: *agent-defaults
+    container_name: agent-5
+    environment:
+      - AGENT_NAME=Agent-5
+      - HOSTNAME=agent-5.sim
+      - SMTP_PORT=2605
+      - CORE_URL=http://localhost:8000
+      - CORE_API_URL=http://localhost:8000/api/v1/sync
+
+  agent-6:
+    <<: *agent-defaults
+    container_name: agent-6
+    environment:
+      - AGENT_NAME=Agent-6
+      - HOSTNAME=agent-6.sim
+      - SMTP_PORT=2606
+      - CORE_URL=http://localhost:8000
+      - CORE_API_URL=http://localhost:8000/api/v1/sync
+
+  agent-7:
+    <<: *agent-defaults
+    container_name: agent-7
+    environment:
+      - AGENT_NAME=Agent-7
+      - HOSTNAME=agent-7.sim
+      - SMTP_PORT=2607
+      - CORE_URL=http://localhost:8000
+      - CORE_API_URL=http://localhost:8000/api/v1/sync
+
+  agent-8:
+    <<: *agent-defaults
+    container_name: agent-8
+    environment:
+      - AGENT_NAME=Agent-8
+      - HOSTNAME=agent-8.sim
+      - SMTP_PORT=2608
+      - CORE_URL=http://localhost:8000
+      - CORE_API_URL=http://localhost:8000/api/v1/sync
+
+  agent-9:
+    <<: *agent-defaults
+    container_name: agent-9
+    environment:
+      - AGENT_NAME=Agent-9
+      - HOSTNAME=agent-9.sim
+      - SMTP_PORT=2609
+      - CORE_URL=http://localhost:8000
+      - CORE_API_URL=http://localhost:8000/api/v1/sync
+
+  agent-10:
+    <<: *agent-defaults
+    container_name: agent-10
+    environment:
+      - AGENT_NAME=Agent-10
+      - HOSTNAME=agent-10.sim
+      - SMTP_PORT=2610
+      - CORE_URL=http://localhost:8000
+      - CORE_API_URL=http://localhost:8000/api/v1/sync

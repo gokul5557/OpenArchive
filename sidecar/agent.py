@@ -185,8 +185,37 @@ async def start_agent():
     # Controller uses the SMTP class by default.
     controller.start()
     
-    logger.info("OpenArchive Sidecar listening on 0.0.0.0:2525")
+    logger.info(f"OpenArchive Sidecar listening on 0.0.0.0:{port}")
     
+    # Start Heartbeat Task
+    core_url = os.getenv("CORE_URL", "http://localhost:8000")
+    agent_name = os.getenv("AGENT_NAME", "Default-Agent")
+    agent_host = os.getenv("HOSTNAME", "localhost")
+
+    async def heartbeat_loop():
+        import aiohttp
+        endpoint = f"{core_url}/api/v1/admin/agents/heartbeat"
+        while True:
+            try:
+                payload = {
+                    "name": agent_name,
+                    "hostname": agent_host
+                }
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(endpoint, json=payload) as resp:
+                        if resp.status != 200:
+                            logger.warning(f"Heartbeat Failed: {resp.status}")
+            except Exception as e:
+                logger.error(f"Heartbeat Error: {e}")
+            
+            await asyncio.sleep(10)
+
+    asyncio.create_task(heartbeat_loop())
+    
+    # Start Sync Loop
+    from sync import sync_loop
+    asyncio.create_task(sync_loop())
+
     # Keep running
     try:
         while True:

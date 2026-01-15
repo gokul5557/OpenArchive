@@ -1,4 +1,5 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
+from security import get_current_user, User
 from pydantic import BaseModel
 from typing import List, Optional
 import database
@@ -64,10 +65,19 @@ class LegalHoldCreate(BaseModel):
     reason: str
     filter_criteria: dict # e.g. {"domains": ["bad.com"]}
 
+class AgentHeartbeat(BaseModel):
+    name: str
+    hostname: str
+    org_id: Optional[int] = None
+    status: str = "ONLINE"
+
 # --- Organization Management (Super Admin) ---
 
 @router.get("/organizations", response_model=List[OrganizationResponse])
-async def list_organizations():
+async def list_organizations(current_user: User = Depends(get_current_user)):
+    if current_user.role != 'super_admin':
+        raise HTTPException(status_code=403, detail="Super Admin access required")
+        
     conn = await database.get_db_connection()
     try:
         rows = await conn.fetch("SELECT id, name, slug, domains, timestamp_placeholder as created_at FROM organizations ORDER BY id ASC".replace('timestamp_placeholder', 'created_at'))
@@ -84,7 +94,10 @@ async def list_organizations():
         await conn.close()
 
 @router.post("/organizations", response_model=OrganizationResponse)
-async def create_organization(org: OrganizationCreate):
+async def create_organization(org: OrganizationCreate, current_user: User = Depends(get_current_user)):
+    if current_user.role != 'super_admin':
+        raise HTTPException(status_code=403, detail="Super Admin access required")
+
     conn = await database.get_db_connection()
     try:
         exists = await conn.fetchval("SELECT 1 FROM organizations WHERE slug = $1", org.slug)
@@ -129,21 +142,93 @@ async def delete_organization(org_id: int):
     finally:
         await conn.close()
 
-# --- User Management ---
+# --- Agent Management ---
 
-@router.get("/users", response_model=List[UserResponse])
-async def list_users(org_id: Optional[int] = Query(None)):
+@router.post("/agents/heartbeat")
+async def agent_heartbeat(hb: AgentHeartbeat):
+    conn = await database.get_db_connection()
+    try:
+        # Upsert Agent
+        row = await conn.fetchrow("SELECT id FROM sidecar_agents WHERE hostname = $1 AND name = $2", hb.hostname, hb.name)
+        
+        if row:
+            await conn.execute("""
+                UPDATE sidecar_agents 
+                SET last_seen = CURRENT_TIMESTAMP, status = 'ONLINE', org_id = COALESCE($2, org_id)
+                WHERE id = $1
+            """, row['id'], hb.org_id)
+        else:
+            await conn.execute("""
+                INSERT INTO sidecar_agents (name, hostname, org_id, status, last_seen)
+                VALUES ($1, $2, $3, 'ONLINE', CURRENT_TIMESTAMP)
+            """, hb.name, hb.hostname, hb.org_id)
+            
+        return {"status": "ok"}
+    finally:
+        await conn.close()
+
+@router.get("/agents", response_model=List[AgentResponse])
+async def list_agents(org_id: Optional[int] = Query(None), current_user: User = Depends(get_current_user)):
+    target_org_id = org_id
+    if current_user.role != 'super_admin':
+        if not current_user.org_id:
+            raise HTTPException(status_code=403, detail="Access denied")
+        target_org_id = current_user.org_id
+
+    conn = await database.get_db_connection()
+    try:
+        query = """
+            SELECT id, name, hostname, org_id, 
+            CASE 
+                WHEN last_seen > NOW() - INTERVAL '30 seconds' THEN 'ONLINE' 
+                ELSE 'OFFLINE' 
+            END as status,
+            last_seen 
+            FROM sidecar_agents
+        """
+        params = []
+        if target_org_id:
+            query += " WHERE org_id = $1"
+            params.append(target_org_id)
+        
+        query += " ORDER BY last_seen DESC"
+        
+        rows = await conn.fetch(query, *params)
+        return [
+            AgentResponse(
+                id=r['id'],
+                name=r['name'],
+                hostname=r['hostname'],
+                org_id=r['org_id'],
+                status=r['status'],
+                last_seen=str(r['last_seen']) if r['last_seen'] else None
+            ) for r in rows
+        ]
+    finally:
+        await conn.close()
+async def list_users(org_id: Optional[int] = Query(None), current_user: User = Depends(get_current_user)):
+    # RBAC Enforcement
+    target_org_id = org_id
+    if current_user.role != 'super_admin':
+        if not current_user.org_id:
+            raise HTTPException(status_code=403, detail="Access denied")
+        # Force Org ID
+        target_org_id = current_user.org_id
+
     conn = await database.get_db_connection()
     try:
         query = "SELECT id, username, role, org_id, domains FROM users"
         params = []
-        if org_id:
-            # Client Admin View: See all users in their org (Auditors)
+        if target_org_id:
+            # Client Admin View (or Super Admin filtering by Org)
             query += " WHERE org_id = $1"
-            params.append(org_id)
-        else:
-            # Super Admin View: See ONLY Client Admins
+            params.append(target_org_id)
+        elif current_user.role == 'super_admin':
+            # Super Admin View with NO filter: See ONLY Client Admins (Global view)
             query += " WHERE role = 'client_admin'"
+        else:
+             # Should not happen if logic above correct
+             raise HTTPException(status_code=403, detail="Access denied")
         
         query += " ORDER BY id ASC"
         
@@ -161,7 +246,15 @@ async def list_users(org_id: Optional[int] = Query(None)):
         await conn.close()
 
 @router.post("/users", response_model=UserResponse)
-async def create_user(user: UserCreate):
+async def create_user(user: UserCreate, current_user: User = Depends(get_current_user)):
+    # RBAC
+    if current_user.role != 'super_admin':
+        if not current_user.org_id or user.org_id != current_user.org_id:
+             raise HTTPException(status_code=403, detail="Cannot create user for another organization")
+        # Client Admin Restriction: Can only create Auditors
+        if user.role != 'auditor':
+             raise HTTPException(status_code=403, detail="Client Admins can only create Auditor accounts.")
+             
     conn = await database.get_db_connection()
     try:
         # Check if exists
@@ -201,9 +294,18 @@ async def create_user(user: UserCreate):
         await conn.close()
 
 @router.delete("/users/{user_id}")
-async def delete_user(user_id: int):
+async def delete_user(user_id: int, current_user: User = Depends(get_current_user)):
     conn = await database.get_db_connection()
     try:
+        # Check target user
+        target = await conn.fetchrow("SELECT org_id FROM users WHERE id = $1", user_id)
+        if not target:
+             raise HTTPException(status_code=404, detail="User not found")
+             
+        if current_user.role != 'super_admin':
+            if target['org_id'] != current_user.org_id:
+                 raise HTTPException(status_code=403, detail="Cannot delete user from another organization")
+
         await conn.execute("DELETE FROM users WHERE id = $1", user_id)
         return {"status": "deleted"}
     finally:
@@ -213,7 +315,11 @@ async def delete_user(user_id: int):
 # --- Audit Logs ---
 
 @router.get("/audit-logs", response_model=List[AuditLogEntry])
-async def list_audit_logs(org_id: int, limit: int = 50):
+async def list_audit_logs(org_id: int, limit: int = 50, current_user: User = Depends(get_current_user)):
+    # RBAC
+    if current_user.role != 'super_admin':
+        if not current_user.org_id or org_id != current_user.org_id:
+             raise HTTPException(status_code=403, detail="Access denied")
     conn = await database.get_db_connection()
     try:
         # RLS Context
@@ -264,7 +370,11 @@ async def create_audit_log(entry: AuditLogCreate, org_id: int):
         await conn.close()
 
 @router.get("/audit-logs/verify")
-async def verify_audit_chain(org_id: int):
+async def verify_audit_chain(org_id: int, current_user: User = Depends(get_current_user)):
+    # RBAC
+    if current_user.role != 'super_admin':
+        if not current_user.org_id or org_id != current_user.org_id:
+             raise HTTPException(status_code=403, detail="Access denied")
     conn = await database.get_db_connection()
     try:
         rows = await conn.fetch("SELECT id, username, action, details, previous_hash, current_hash FROM audit_logs WHERE org_id = $1 ORDER BY id ASC", org_id)

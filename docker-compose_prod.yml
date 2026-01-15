@@ -12,15 +12,15 @@ services:
     volumes:
       - ./certs:/etc/ssl/openarchive:ro # Mount Certificates
     environment:
-      - DATABASE_URL=postgresql://user:password@postgres:5432/archive
-      - MINIO_ENDPOINT=http://minio:9000
-      - MINIO_ROOT_USER=admin
-      - MINIO_ROOT_PASSWORD=password
-      - MEILI_HTTP_ADDR=http://meilisearch:7700
-      - MEILI_MASTER_KEY=masterKey
-      - CORE_API_KEY=secret_shared_key
-      - OPENARCHIVE_MASTER_KEY=change-this-to-a-secure-random-string
-      - ALLOWED_SMTP_IPS=127.0.0.1,172.16.0.0/12,192.168.0.0/16 # Whitelist
+      - DATABASE_URL=${DATABASE_URL}
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT}
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+      - MEILI_HTTP_ADDR=${MEILI_HTTP_ADDR}
+      - MEILI_MASTER_KEY=${MEILI_MASTER_KEY}
+      - CORE_API_KEY=${CORE_API_KEY}
+      - OPENARCHIVE_MASTER_KEY=${OPENARCHIVE_MASTER_KEY}
+      - ALLOWED_SMTP_IPS=${ALLOWED_SMTP_IPS}
     depends_on:
       - postgres
       - minio
@@ -35,10 +35,9 @@ services:
       - "2526:2525" # Agent Listen Port
     environment:
       - CORE_API_URL=https://core/api/v1/sync # Connects via Internal Docker Network (Https/443 default port on core container)
-      # Wait, core container listens on 443.
       # Service name `core` resolves to internal IP.
       # Request `https://core/api...` will hit port 443. OK.
-      - CORE_API_KEY=secret_shared_key
+      - CORE_API_KEY=${CORE_API_KEY}
       - PYTHONHTTPSVERIFY=0
     depends_on:
       - core
@@ -58,8 +57,8 @@ services:
     image: minio/minio
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: admin
-      MINIO_ROOT_PASSWORD: password
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
     volumes:
       - minio_data:/data
     ports:
@@ -71,7 +70,7 @@ services:
     ports:
       - "7705:7700"
     environment:
-      MEILI_MASTER_KEY: masterKey
+      - MEILI_MASTER_KEY=${MEILI_MASTER_KEY}
     volumes:
       # Mount the encrypted loopback volume here for security
       # Ensure you ran scripts/setup_encrypted_volume.sh first!

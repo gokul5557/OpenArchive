@@ -1,11 +1,24 @@
 import boto3
 import os
+import secrets
+from datetime import datetime
+import asyncio
 from botocore.exceptions import ClientError
 
-MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "http://localhost:9000")
-MINIO_ACCESS_KEY = os.getenv("MINIO_ROOT_USER", "admin")
-MINIO_SECRET_KEY = os.getenv("MINIO_ROOT_PASSWORD", "password")
-BUCKET_NAME = "archive-blobs"
+try:
+    from config import settings
+    import encryption
+    import database
+    import integrity
+except ImportError:
+    from core.config import settings
+    from core import encryption, database, integrity
+
+import aiofiles
+MINIO_ENDPOINT = settings.MINIO_ENDPOINT
+MINIO_ACCESS_KEY = settings.MINIO_ROOT_USER
+MINIO_SECRET_KEY = settings.MINIO_ROOT_PASSWORD
+BUCKET_NAME = settings.MINIO_BUCKET_NAME
 
 s3_client = boto3.client(
     's3',

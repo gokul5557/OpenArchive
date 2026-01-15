@@ -10,7 +10,7 @@ sidecar/data/
 
 # Logs
 *.log
-logs/
+/logs/
 
 # Env & Config
 .env

@@ -1,9 +1,13 @@
 import hashlib
 import hmac
-import os
+try:
+    from config import settings
+except ImportError:
+    from core.config import settings
 
+SECRET_KEY = settings.SYSTEM_SECRET
 # System-level secret for HMAC signing (In production, use KMS or Environment Secret)
-SYSTEM_SECRET = os.getenv("OPENARCHIVE_INTEGRITY_KEY", "super-secret-integrity-key-123456").encode()
+SYSTEM_SECRET = settings.SYSTEM_SECRET.encode()
 
 def calculate_hash(data: bytes) -> str:
     """Returns the SHA-256 hash of the data."""

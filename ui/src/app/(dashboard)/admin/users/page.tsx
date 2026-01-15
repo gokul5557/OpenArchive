@@ -20,12 +20,19 @@ export default function UsersPage() {
     const [newUser, setNewUser] = useState({ username: '', password: '', role: 'auditor', domains: '', targetOrgId: '' });
     const [loading, setLoading] = useState(true);
 
+    const getHeaders = () => {
+        const headers: Record<string, string> = {};
+        const token = localStorage.getItem('access_token');
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        return headers;
+    };
+
     useEffect(() => {
         if (user?.role === 'super_admin') {
             // Fetch All Orgs
-            fetch('/api/v1/admin/organizations')
-                .then(res => res.json())
-                .then(setOrganizations)
+            fetch('/api/v1/admin/organizations', { headers: getHeaders() })
+                .then(res => res.ok ? res.json() : [])
+                .then(data => Array.isArray(data) ? setOrganizations(data) : setOrganizations([]))
                 .catch(console.error);
 
             // Fetch All Client Admins (no org filter = client admins only)
@@ -41,10 +48,11 @@ export default function UsersPage() {
         try {
             let url = '/api/v1/admin/users';
             if (oid) url += `?org_id=${oid}`;
-            const res = await fetch(url);
+            const res = await fetch(url, { headers: getHeaders() });
             if (res.ok) {
                 const data = await res.json();
-                setUsers(data);
+                if (Array.isArray(data)) setUsers(data);
+                else setUsers([]); // Safety fallback
             }
         } catch (err) {
             console.error(err);
@@ -77,7 +85,7 @@ export default function UsersPage() {
         try {
             const res = await fetch('/api/v1/admin/users', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', ...getHeaders() },
                 body: JSON.stringify({
                     username: newUser.username,
                     password: newUser.password,
@@ -101,7 +109,7 @@ export default function UsersPage() {
 
     const handleDelete = async (id: number) => {
         if (!confirm('Are you sure?')) return;
-        await fetch(`/api/v1/admin/users/${id}`, { method: 'DELETE' });
+        await fetch(`/api/v1/admin/users/${id}`, { method: 'DELETE', headers: getHeaders() });
         fetchUsers(user?.role === 'super_admin' ? null : orgId);
     };
 
